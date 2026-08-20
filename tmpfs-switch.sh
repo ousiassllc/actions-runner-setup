@@ -83,10 +83,14 @@ switch_on() {
     log "[$idx] 既に tmpfs ($(readlink "$work"))"
   else
     # ツールキャッシュは SSD 側へ退避してから _work を捨てる。
-    if [ -d "$work/_tool" ]; then
-      mkdir -p "$tool_cache"
+    # 同一ファイルシステム内なので mv なら実データのコピーが発生しない。
+    # このマシンの SSD は書き込みが 11 MB/s しか出ないため、cp では数百 MB の
+    # 退避に分単位でかかってしまう。
+    if [ -d "$work/_tool" ] && [ ! -L "$work/_tool" ]; then
+      # 中断などで不完全な退避が残っている可能性があるため作り直す。
+      rm -rf "$tool_cache"
       log "[$idx] _tool を tool-cache へ退避 ($(du -sh "$work/_tool" 2>/dev/null | cut -f1))"
-      cp -a "$work/_tool/." "$tool_cache/" 2>/dev/null || true
+      mv "$work/_tool" "$tool_cache"
     fi
     rm -rf "$work"
     ln -s "$shm_work" "$work"
@@ -114,10 +118,10 @@ switch_off() {
   fi
   mkdir -p "$work"
 
-  # 退避しておいたツールキャッシュを _work 配下へ戻す。
+  # 退避しておいたツールキャッシュを _work 配下へ戻す (mv なのでコピーは発生しない)。
   if [ -d "$tool_cache" ]; then
-    mkdir -p "$work/_tool"
-    cp -a "$tool_cache/." "$work/_tool/" 2>/dev/null || true
+    rm -rf "$work/_tool"
+    mv "$tool_cache" "$work/_tool"
   fi
   log "[$idx] _work を SSD へ戻した"
 
