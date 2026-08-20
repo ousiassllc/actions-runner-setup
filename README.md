@@ -34,6 +34,37 @@ make add
 
 > **注意**: トークンは runner 自身が読む `.env` ではなく `.env.token` に書く。`.env` は `add-actions-runners.sh` が各 runner ディレクトリにコピーするため、そこに書くと CI ジョブから見える環境変数になってしまう。
 
+## ストレージ (`_work` の置き場所)
+
+このマシンの CI は **SSD の書き込みが律速**になる。checkout / `bun install` / ビルド成果物の
+書き込みが SSD の実効性能を超えるとダーティページが RAM に滞留し、上限に達した時点で
+書き込もうとする全プロセスが同期ブロックされる。結果として load average が 3 桁まで跳ね、
+ジョブが数十分〜1 時間以上 `in_progress` のままハングする。
+
+対策として `_work` を tmpfs (`/dev/shm`) に置き、書き込みを RAM に逃がす。
+
+```bash
+make stop-all
+make tmpfs-on        # 全 runner の _work を /dev/shm へ
+make start-all
+make tmpfs-status    # 現在どちらを使っているか
+```
+
+戻すときは `make tmpfs-off`。どちらも `_work` の中身は破棄されるため、実行中のジョブが
+無い状態で行うこと (スクリプト側でも Worker が居たら中断する)。
+
+設計上の要点:
+
+- **`_tool` だけは SSD に残す** — `_work/_tool` は `actions-runner-N/tool-cache` への
+  symlink にして永続化する。ここが揮発すると `setup-go` / `setup-bun` が毎回ツールを
+  再取得し、ネットワークと tmpfs 容量の両方を無駄に消費する。
+- **`/dev/shm` は再起動でクリアされる** — unit に `ExecStartPre` を差し込み、起動のたびに
+  `prepare-work-tmpfs.sh` が作業ディレクトリと `_tool` symlink を作り直す。
+- **swap が無いことが安全弁になる** — tmpfs は `/dev/shm` のサイズ (32GB) が上限なので、
+  溢れてもジョブが ENOSPC で落ちるだけで OOM には至らない。ただし全 runner で共有する
+  容量なので、台数を増やすときは 1 台あたりの `_work` 実サイズと突き合わせること。
+- **sudo 不要** — 新規に tmpfs をマウントするのではなく、既存の `/dev/shm` を間借りする。
+
 ## 使い方
 
 ```

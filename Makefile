@@ -11,6 +11,7 @@
 #
 # よく使うもの:
 #   make fetch      runner の tarball を GitHub から取得
+#   make tmpfs-on   _work を RAM (/dev/shm) に逃がして SSD 律速を外す
 #   make add        runner を 12 台立てる
 #   make status     全 runner の状態
 #   make busy       いま何台がジョブを実行中か
@@ -47,6 +48,7 @@ UNIT_PREFIX := actions.runner.$(ORG).ousiass-desktop
 .DEFAULT_GOAL := help
 
 .PHONY: help fetch add status busy queue logs \
+        tmpfs-on tmpfs-off tmpfs-status \
         stop start restart stop-all start-all restart-all \
         remove remove-legacy token
 
@@ -57,6 +59,11 @@ help:
 	@echo "  make fetch [RUNNER_VERSION=x.y.z] runner tarball を GitHub から取得"
 	@echo "  make add [COUNT=12] [TOKEN=xxxx]  runner を追加登録して起動"
 	@echo "  make remove-legacy [TOKEN=xxxx]   停止中の ousiass-desktop を org から登録解除"
+	@echo
+	@echo "ストレージ"
+	@echo "  make tmpfs-on [N_LIST=\"2 3\"]      _work を /dev/shm に逃がす (要 stop-all)"
+	@echo "  make tmpfs-off [N_LIST=...]       _work を SSD に戻す"
+	@echo "  make tmpfs-status                 現在どちらを使っているか"
 	@echo
 	@echo "状態確認"
 	@echo "  make status                       全 runner の service 状態"
@@ -106,6 +113,31 @@ remove-legacy: guard-TOKEN
 	  echo "ERROR: Listener が稼働中。先に停止すること" >&2; exit 1; fi
 	cd $(RUNNER_DIR) && ./config.sh remove --token "$(TOKEN)"
 	@echo "登録解除した。一覧: $(RUNNER_LIST)"
+
+# --- ストレージ -------------------------------------------------------------
+# CI の書き込みが SSD の性能を超えるとダーティページが滞留し、全ジョブが I/O 待ちで
+# ハングする。_work を tmpfs に置いて書き込みを RAM に逃がすことで律速を外す。
+# 詳細な背景と _tool の扱いは tmpfs-switch.sh の冒頭コメントを参照。
+#
+# N_LIST で対象を絞れる: make tmpfs-on N_LIST="2 3"
+N_LIST ?=
+
+tmpfs-on:
+	$(RUNNER_DIR)/tmpfs-switch.sh on $(N_LIST)
+
+tmpfs-off:
+	$(RUNNER_DIR)/tmpfs-switch.sh off $(N_LIST)
+
+tmpfs-status:
+	@df -h /dev/shm | awk 'NR==2{printf "/dev/shm: %s 使用 / %s (%s)\n", $$3, $$2, $$5}'
+	@for d in $(HOME)/actions-runner-[0-9]*; do \
+	  [ -d "$$d" ] || continue; \
+	  if [ -L "$$d/_work" ]; then \
+	    printf "  %-22s tmpfs  (%s)\n" "$$(basename $$d)" "$$(readlink $$d/_work)"; \
+	  else \
+	    printf "  %-22s SSD\n" "$$(basename $$d)"; \
+	  fi; \
+	done
 
 # --- 状態確認 ---------------------------------------------------------------
 

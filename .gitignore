@@ -8,3 +8,5 @@
 !/Makefile
 !/README.md
 !/add-actions-runners.sh
+!/prepare-work-tmpfs.sh
+!/tmpfs-switch.sh
