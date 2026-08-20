@@ -64,6 +64,24 @@ make tmpfs-status    # 現在どちらを使っているか
   溢れてもジョブが ENOSPC で落ちるだけで OOM には至らない。ただし全 runner で共有する
   容量なので、台数を増やすときは 1 台あたりの `_work` 実サイズと突き合わせること。
 - **sudo 不要** — 新規に tmpfs をマウントするのではなく、既存の `/dev/shm` を間借りする。
+- **`/dev/shm` は他用途と共有** — 間借りである以上、runner 以外のプロセスが大きなデータを
+  置くと runner 側が枯渇する。実例として Go の module cache 19GB が `/dev/shm` に複製され、
+  32GB のうち runner が使えるのが 7GB 弱になったことがある。台数を増やす前とジョブが
+  ENOSPC で落ちたときは `make tmpfs-status` で使用量を確認すること。
+  `/dev/shm` 自体を広げるには `sudo mount -o remount,size=48G /dev/shm` (要パスワード)。
+
+### 実測値 (2026-08-20)
+
+| 対象 | 書き込み速度 |
+| --- | --- |
+| SSD (`/dev/sdc3`) direct | 26 MB/s |
+| SSD buffered + fsync | 11 MB/s |
+| tmpfs (`/dev/shm`) | 2.4 GB/s |
+
+SSD は Kingmax の SATA 品で、23 時間で 430GB 書き込んだ後の値。正常な SATA SSD なら
+300〜500 MB/s 出るところなので、SLC キャッシュを使い切って低速モードに落ちていると
+見られる。tmpfs 化前は load average 522 / Dirty 8.4GB / Worker 5 本が 40 分以上ハング
+という状態だったが、tmpfs 化後は load 1〜12 / Dirty 0〜400MB で安定した。
 
 ## 使い方
 
