@@ -1,0 +1,10 @@
+# 追跡するのは runner 管理用の自作ファイルだけ。
+# GitHub 公式配布物 (bin/ externals/ config.sh 等)、tarball、実行時生成物
+# (_work/ _diag/ .runner .credentials .path) は一切コミットしない。
+# 除外漏れによる認証情報の混入を防ぐため、既定で全無視 + 明示許可とする。
+/*
+!/.gitignore
+!/.env.token.example
+!/Makefile
+!/README.md
+!/add-actions-runners.sh
