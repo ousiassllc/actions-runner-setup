@@ -13,7 +13,8 @@
 #   許可されているためパスワード不要で通る。
 #
 # 使い方:
-#   ./add-actions-runners.sh <ORG_TOKEN> [台数(既定12)]
+#   RUNNER_REG_TOKEN=<ORG_TOKEN> ./add-actions-runners.sh "" [台数(既定12)]
+#   ./add-actions-runners.sh <ORG_TOKEN> [台数(既定12)]   (ps に残るので非推奨)
 #
 #   通常は Makefile 経由で使う: make add
 #   tarball が無い場合は先に make fetch で公式リリースから取得する。
@@ -32,13 +33,17 @@
 #
 set -euo pipefail
 
-TOKEN="${1:-}"
+# トークンは環境変数を優先する (コマンドラインに出すと ps で他ユーザーから見える)
+TOKEN="${RUNNER_REG_TOKEN:-${1:-}}"
 ADD_COUNT="${2:-12}"
 
 ORG="ousiassllc"
 ORG_URL="https://github.com/$ORG"
 SRC_RUNNER="$HOME/actions-runner"
-TARBALL="$(ls -1 "$SRC_RUNNER"/actions-runner-linux-x64-*.tar.gz 2>/dev/null | head -1)"
+# 使う tarball: RUNNER_TARBALL があればそれ (Makefile は make fetch した版を渡す)。
+# 無ければ供給元ディレクトリの最新版。未検出でも pipefail で無言終了しないよう
+# ls ではなく glob + sort -V で選び、存在は直後の -f 検査で判定する。
+TARBALL="${RUNNER_TARBALL:-$(printf '%s\n' "$SRC_RUNNER"/actions-runner-linux-x64-*.tar.gz | sort -V | tail -n 1)}"
 UNIT_DIR="$HOME/.config/systemd/user"
 NAME_PREFIX="ousiass-desktop"
 
@@ -51,8 +56,8 @@ STABLE_PATH="$HOME/.local/bin:/opt/nvim/bin:/usr/local/go/bin:$HOME/go/bin:$HOME
 die() { echo "ERROR: $*" >&2; exit 1; }
 log() { echo ">>> $*"; }
 
-[ -n "$TOKEN" ] || die "ORG_TOKEN が未指定。使い方: $0 <ORG_TOKEN> [台数]"
-[ -n "$TARBALL" ] || die "runner の tarball が見つからない ($SRC_RUNNER)"
+[ -n "$TOKEN" ] || die "ORG_TOKEN が未指定。使い方: $0 <ORG_TOKEN> [台数] (または RUNNER_REG_TOKEN 環境変数)"
+[ -f "$TARBALL" ] || die "runner の tarball が見つからない (${RUNNER_TARBALL:-$SRC_RUNNER})。先に make fetch すること"
 [[ "$ADD_COUNT" =~ ^[0-9]+$ ]] || die "台数が数値でない: $ADD_COUNT"
 
 log "tarball  : $TARBALL"
@@ -70,17 +75,14 @@ fi
 
 mkdir -p "$UNIT_DIR"
 
-# ~/actions-runner-N を 1 台セットアップして user systemd unit を作る
+# ~/actions-runner-N を 1 台セットアップして user systemd unit を作る。
+# 呼び出し側で .runner の有無を確認済みであること。set -e を効かせるため
+# if / || の条件位置では呼ばない。
 setup_one() {
   local idx="$1"
   local dest="$HOME/actions-runner-$idx"
   local name="$NAME_PREFIX-$idx"
   local unit="actions.runner.$ORG.$name"
-
-  if [ -f "$dest/.runner" ]; then
-    log "スキップ: $dest は既に設定済み"
-    return 1
-  fi
 
   # 前回中断した残骸があれば消す (パスを厳密に検証してから rm する)
   if [ -d "$dest" ]; then
@@ -158,10 +160,15 @@ attempts=0
 while [ "${#created[@]}" -lt "$ADD_COUNT" ] && [ "$attempts" -lt $((ADD_COUNT + 20)) ]; do
   idx=$((idx + 1))
   attempts=$((attempts + 1))
-  if setup_one "$idx"; then
-    created+=("$NAME_PREFIX-$idx")
-    echo
+  # スキップ判定は関数の外で行う。setup_one を if / || の条件位置で呼ぶと
+  # 関数内の set -e が無効になり、config.sh などの失敗を見逃して unit を作ってしまう。
+  if [ -f "$HOME/actions-runner-$idx/.runner" ]; then
+    log "スキップ: $HOME/actions-runner-$idx は既に設定済み"
+    continue
   fi
+  setup_one "$idx"
+  created+=("$NAME_PREFIX-$idx")
+  echo
 done
 
 echo "===================================================="
@@ -169,5 +176,6 @@ log "完了: ${#created[@]} 台追加 (${created[*]:-なし})"
 echo
 systemctl --user list-units 'actions.runner.*' --no-pager --all || true
 echo
+# shellcheck disable=SC2088  # 表示用の文字列。展開させない
 log "~/actions-runner 自体は runner として使わない (tarball と .env の供給元)。"
 log "状態確認: make status / make busy / make queue"

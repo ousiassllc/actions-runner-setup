@@ -10,3 +10,5 @@
 !/add-actions-runners.sh
 !/prepare-work-tmpfs.sh
 !/tmpfs-switch.sh
+!/.github/
+!/test/
