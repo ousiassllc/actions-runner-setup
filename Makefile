@@ -112,11 +112,11 @@ add: guard-TOKEN fetch
 # ディレクトリと tarball は add の供給元なので消さない。
 # 注意: removal token を要求されて失敗する場合は $(RUNNER_LIST) の UI から削除する。
 remove-legacy: guard-TOKEN
-	@if [ ! -f "$(RUNNER_DIR)/.runner" ]; then echo "既に登録解除済み"; exit 0; fi
-	@if pgrep -f 'Runner\.Listener run' >/dev/null 2>&1; then \
-	  echo "ERROR: Listener が稼働中。先に停止すること" >&2; exit 1; fi
-	@cd $(RUNNER_DIR) && ./config.sh remove --token "$$RUNNER_REG_TOKEN"
-	@echo "登録解除した。一覧: $(RUNNER_LIST)"
+	@if [ ! -f "$(RUNNER_DIR)/.runner" ]; then echo "既に登録解除済み"; exit 0; fi; \
+	if pgrep -f 'Runner\.Listener run' >/dev/null 2>&1; then \
+	  echo "ERROR: Listener が稼働中。先に停止すること" >&2; exit 1; fi; \
+	cd $(RUNNER_DIR) && ./config.sh remove --token "$$RUNNER_REG_TOKEN" && \
+	echo "登録解除した。一覧: $(RUNNER_LIST)"
 
 # --- ストレージ -------------------------------------------------------------
 # CI の書き込みが SSD の性能を超えるとダーティページが滞留し、全ジョブが I/O 待ちで

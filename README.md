@@ -25,14 +25,16 @@ make fetch
 # 2. 登録トークンを用意する（有効期限 1 時間）
 make token                        # 発行ページの URL を表示
 cp .env.token.example .env.token  # TOKEN=... を書く
+chmod 600 .env.token              # 他ユーザーに読ませない
 
 # 3. runner を 12 台立てる
 make add
 ```
 
-トークンは `make add TOKEN=xxxx` のようにコマンドラインから渡すこともできる。
+トークンは `make add TOKEN=xxxx` のようにコマンドラインから渡すこともできるが、`make` 自身の引数として
+`ps` に見える (make の実行中ずっと)。常用は `.env.token` を使うこと。
 `make` は recipe を `@` で静かにし、トークンを環境変数 `RUNNER_REG_TOKEN` で渡すので、端末やログには出ない
-(`config.sh` 自身には `--token` として渡るため、実行中の数秒間は `ps` に見える)。
+(`config.sh` 自身には `--token` として渡るため、その実行中の数秒間も `ps` に見える)。
 
 > **注意**: トークンは runner 自身が読む `.env` ではなく `.env.token` に書く。`.env` は `add-actions-runners.sh` が各 runner ディレクトリにコピーするため、そこに書くと CI ジョブから見える環境変数になってしまう。
 
