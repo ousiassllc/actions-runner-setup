@@ -35,6 +35,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREPARE="$SCRIPT_DIR/prepare-work-tmpfs.sh"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT_PREFIX="actions.runner.ousiassllc.ousiass-desktop"
+# tmpfs 側の置き場。prepare-work-tmpfs.sh と同じ既定値 (テストでは差し替える)
+SHM_ROOT="${SHM_ROOT:-/dev/shm/actions-runner}"
+export SHM_ROOT
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 log() { echo ">>> $*"; }
@@ -53,6 +56,10 @@ else
   done
 fi
 [ "${#TARGETS[@]}" -gt 0 ] || die "対象の runner が見つからない"
+# 番号は rm -rf するパスの一部になるので数字だけを許す
+for n in "${TARGETS[@]}"; do
+  [[ "$n" =~ ^[0-9]+$ ]] || die "runner 番号が数字でない: '$n'"
+done
 
 pgrep -f 'Runner\.Worker' >/dev/null 2>&1 && die "ジョブ実行中。先に make stop-all すること"
 
@@ -74,7 +81,7 @@ switch_on() {
   local idx="$1"
   local dest="$HOME/actions-runner-$idx"
   local work="$dest/_work"
-  local shm_work="/dev/shm/actions-runner/$idx/_work"
+  local shm_work="$SHM_ROOT/$idx/_work"
   local tool_cache="$dest/tool-cache"
 
   [ -d "$dest" ] || { log "[$idx] $dest が無いのでスキップ"; return 0; }
@@ -101,7 +108,9 @@ switch_on() {
   "$PREPARE" "$idx"
 
   local unit_file="$UNIT_DIR/$UNIT_PREFIX-$idx.service"
-  [ -f "$unit_file" ] && add_prepare_hook "$unit_file" "$idx"
+  # [ -f ] && cmd を関数の最終文にすると、unit が無いとき関数が 1 を返して
+  # set -e でスクリプト全体が止まる。
+  if [ -f "$unit_file" ]; then add_prepare_hook "$unit_file" "$idx"; fi
 }
 
 switch_off() {
@@ -114,7 +123,7 @@ switch_off() {
 
   if [ -L "$work" ]; then
     rm -f "$work"
-    rm -rf "/dev/shm/actions-runner/$idx"
+    rm -rf "${SHM_ROOT:?}/$idx"
   fi
   mkdir -p "$work"
 
@@ -126,7 +135,7 @@ switch_off() {
   log "[$idx] _work を SSD へ戻した"
 
   local unit_file="$UNIT_DIR/$UNIT_PREFIX-$idx.service"
-  [ -f "$unit_file" ] && remove_prepare_hook "$unit_file"
+  if [ -f "$unit_file" ]; then remove_prepare_hook "$unit_file"; fi
 }
 
 case "$MODE" in

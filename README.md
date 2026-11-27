@@ -31,6 +31,8 @@ make add
 ```
 
 トークンは `make add TOKEN=xxxx` のようにコマンドラインから渡すこともできる。
+`make` は recipe を `@` で静かにし、トークンを環境変数 `RUNNER_REG_TOKEN` で渡すので、端末やログには出ない
+(`config.sh` 自身には `--token` として渡るため、実行中の数秒間は `ps` に見える)。
 
 > **注意**: トークンは runner 自身が読む `.env` ではなく `.env.token` に書く。`.env` は `add-actions-runners.sh` が各 runner ディレクトリにコピーするため、そこに書くと CI ジョブから見える環境変数になってしまう。
 
@@ -51,7 +53,13 @@ make tmpfs-status    # 現在どちらを使っているか
 ```
 
 戻すときは `make tmpfs-off`。どちらも `_work` の中身は破棄されるため、実行中のジョブが
-無い状態で行うこと (スクリプト側でも Worker が居たら中断する)。
+無い状態で行うこと (スクリプト側でも Worker が居たら中断する)。対象は `N_LIST="2 3"` で絞れる。
+
+`make add` で増やした runner は tmpfs の対象外 (新規は SSD 上の `_work` を使う)。
+増設後に `make stop-all` → `make tmpfs-on` → `make start-all` をやり直すこと。
+
+`/dev/shm/actions-runner` は他ユーザーから `_work` (チェックアウトや認証情報) を読まれないよう、
+`prepare-work-tmpfs.sh` が起動のたびに `700` にする。
 
 設計上の要点:
 
@@ -125,8 +133,11 @@ make stop N=9                     1 台停止（実行中ジョブ完了後 / �
 make start N=9 / restart N=9
 make stop-all / start-all / restart-all
 
-make remove N=9 [TOKEN=xxxx]      1 台を org から登録解除してディレクトリ削除
+make remove N=9 [TOKEN=xxxx]      1 台を org から登録解除してディレクトリ削除 (N は必須)
 make token                        登録トークン発行ページを表示
+
+make tmpfs-on / tmpfs-off [N_LIST="2 3"]  _work を /dev/shm へ逃がす / SSD へ戻す (要 stop-all)
+make tmpfs-status                 _work が tmpfs か SSD か
 ```
 
 `make` を引数なしで実行するとこのヘルプが出る。

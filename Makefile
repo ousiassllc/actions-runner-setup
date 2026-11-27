@@ -36,6 +36,8 @@ TARBALL_URL  = https://github.com/actions/runner/releases/download/v$(RUNNER_VER
 # コピーされるので、そこにトークンを書くと CI ジョブから見える環境変数になる。
 -include $(RUNNER_DIR)/.env.token
 TOKEN ?=
+# 登録トークンを使う target だけに環境変数で渡す (他の recipe の環境には載せない)
+add remove remove-legacy: export RUNNER_REG_TOKEN = $(TOKEN)
 
 # 立てる台数。ai-liver の Check は 8 ジョブ matrix なので 8 以上あれば 1 巡で消化できる。
 COUNT ?= 12
@@ -50,7 +52,7 @@ UNIT_PREFIX := actions.runner.$(ORG).ousiass-desktop
 .PHONY: help fetch add status busy queue logs \
         tmpfs-on tmpfs-off tmpfs-status \
         stop start restart stop-all start-all restart-all \
-        remove remove-legacy token
+        remove remove-legacy token need-N
 
 help:
 	@echo "GitHub Actions self-hosted runner 管理 ($(ORG))"
@@ -101,8 +103,10 @@ $(TARBALL):
 	mv "$@.part" "$@"; \
 	echo ">>> 取得完了: $@"
 
+# recipe は @ で静かにする。make は recipe を展開後にエコーするので、@ が無いと
+# 登録トークンが端末やログに出る。トークンは環境変数で渡し、コマンドラインに載せない。
 add: guard-TOKEN fetch
-	$(RUNNER_DIR)/add-actions-runners.sh "$(TOKEN)" "$(COUNT)"
+	@RUNNER_TARBALL="$(TARBALL)" $(RUNNER_DIR)/add-actions-runners.sh "" "$(COUNT)"
 
 # 停止中の旧 runner (~/actions-runner) を org の一覧から外す。
 # ディレクトリと tarball は add の供給元なので消さない。
@@ -111,7 +115,7 @@ remove-legacy: guard-TOKEN
 	@if [ ! -f "$(RUNNER_DIR)/.runner" ]; then echo "既に登録解除済み"; exit 0; fi
 	@if pgrep -f 'Runner\.Listener run' >/dev/null 2>&1; then \
 	  echo "ERROR: Listener が稼働中。先に停止すること" >&2; exit 1; fi
-	cd $(RUNNER_DIR) && ./config.sh remove --token "$(TOKEN)"
+	@cd $(RUNNER_DIR) && ./config.sh remove --token "$$RUNNER_REG_TOKEN"
 	@echo "登録解除した。一覧: $(RUNNER_LIST)"
 
 # --- ストレージ -------------------------------------------------------------
@@ -146,8 +150,8 @@ status:
 	@systemctl --user list-units 'actions.runner.*' --no-pager --all || true
 	@echo
 	@echo "=== プロセス数 ==="
-	@printf "  Listener (待機中): %s 台\n" "$$(pgrep -cf 'Runner\.Listener run' || echo 0)"
-	@printf "  Worker   (実行中): %s 台\n" "$$(pgrep -cf 'Runner\.Worker' || echo 0)"
+	@printf "  Listener (待機中): %s 台\n" "$$(pgrep -cf 'Runner\.Listener run' || true)"
+	@printf "  Worker   (実行中): %s 台\n" "$$(pgrep -cf 'Runner\.Worker' || true)"
 	@echo
 	@echo "=== linger / リソース ==="
 	@loginctl show-user "$$(id -un)" -p Linger || true
@@ -160,7 +164,7 @@ status:
 # 実働 runner は ~/actions-runner-N 配下で動くので、全ディレクトリの
 # 最新 Worker ログから実行中リポジトリを拾う。
 busy:
-	@n=$$(pgrep -cf 'Runner\.Worker' || echo 0); \
+	@n=$$(pgrep -cf 'Runner\.Worker' || true); \
 	echo "ジョブ実行中: $$n 台"; \
 	if [ "$$n" -gt 0 ]; then \
 	  for d in $(HOME)/actions-runner-[0-9]*; do \
@@ -206,13 +210,20 @@ restart-all:
 
 # --- 撤去 -------------------------------------------------------------------
 
-remove: guard-TOKEN
+# N の既定値 (2) は稼働中の runner なので、撤去では暗黙の既定値に頼らせない。
+remove: guard-TOKEN need-N
 	systemctl --user disable --now $(UNIT_PREFIX)-$(N)
 	rm -f $(HOME)/.config/systemd/user/$(UNIT_PREFIX)-$(N).service
 	systemctl --user daemon-reload
-	cd $(HOME)/actions-runner-$(N) && ./config.sh remove --token "$(TOKEN)"
+	cd $(HOME)/actions-runner-$(N) && ./config.sh remove --token "$$RUNNER_REG_TOKEN"
 	rm -rf $(HOME)/actions-runner-$(N)
 	@echo "ousiass-desktop-$(N) を撤去した"
+
+# N を明示し、数字であることを確認する (rm -rf のパスに入るため)
+need-N:
+	@if [ "$(origin N)" = "file" ]; then \
+	  echo "ERROR: N が未指定です。撤去する runner 番号を明示すること。例: make $(MAKECMDGOALS) N=9" >&2; exit 1; fi
+	@case "$(N)" in ''|*[!0-9]*) echo "ERROR: N は数字で指定すること: '$(N)'" >&2; exit 1;; esac
 
 # --- ヘルパー ---------------------------------------------------------------
 
