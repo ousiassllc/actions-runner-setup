@@ -155,6 +155,44 @@ else
   ok "make remove: 拒否時は何も実行しない"
 fi
 
+new_env make-remove-ok
+home="$ENV_DIR/home"
+mkdir -p "$home/actions-runner-9" "$home/actions-runner-2" "$home/.config/systemd/user"
+# shellcheck disable=SC2016  # スタブ側のシェルに展開させるので単一引用符で良い
+printf '#!/usr/bin/env bash\necho "$*" >> "$HOME/remove.args"\n' > "$home/actions-runner-9/config.sh"
+chmod +x "$home/actions-runner-9/config.sh"
+: > "$home/.config/systemd/user/actions.runner.ousiassllc.ousiass-desktop-9.service"
+out="$(run_make remove TOKEN="$secret" N=9 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail "make remove N=9 が失敗した (終了コード $rc)" "$out"
+elif [[ "$out" == *"$secret"* ]]; then
+  fail "make remove: トークンが出力に出ている" "$out"
+elif ! grep -q -- "remove --token $secret" "$home/remove.args"; then
+  fail "make remove: config.sh にトークンが渡っていない" "$(cat "$home/remove.args" 2>/dev/null)"
+elif [ -e "$home/actions-runner-9" ] || [ -e "$home/.config/systemd/user/actions.runner.ousiassllc.ousiass-desktop-9.service" ]; then
+  fail "make remove: ディレクトリか unit が残っている"
+elif [ ! -d "$home/actions-runner-2" ]; then
+  fail "make remove: 指定外の runner まで消している"
+else
+  ok "make remove: 指定した 1 台だけを撤去し、トークンを出力に出さない"
+fi
+
+new_env make-remove-legacy
+home="$ENV_DIR/home"
+mkdir -p "$home/actions-runner"
+# shellcheck disable=SC2016  # スタブ側のシェルに展開させるので単一引用符で良い
+printf '#!/usr/bin/env bash\necho "$*" >> "$HOME/legacy.args"\n' > "$home/actions-runner/config.sh"
+chmod +x "$home/actions-runner/config.sh"
+check "make remove-legacy: 登録解除済み (.runner 無し) なら何もせず成功する" 0 "既に登録解除済み" -- \
+  run_make remove-legacy TOKEN=x
+assert "make remove-legacy: 登録解除済みなら config.sh を呼ばない" "$(cat "$home/legacy.args" 2>/dev/null)" -- \
+  test ! -e "$home/legacy.args"
+touch "$home/actions-runner/.runner"
+check "make remove-legacy: .runner があれば config.sh remove を呼ぶ" 0 "登録解除した" -- \
+  run_make remove-legacy TOKEN=legacy-token
+assert "make remove-legacy: トークンを config.sh へ渡す" "$(cat "$home/legacy.args" 2>/dev/null)" -- \
+  grep -qx 'remove --token legacy-token' "$home/legacy.args"
+
 new_env make-busy
 out="$(run_make busy 2>&1)"
 assert "make busy: Worker 0 件でも表示が崩れない" "$out" -- test "$out" = "ジョブ実行中: 0 台"
@@ -201,8 +239,29 @@ elif [ -d "$ENV_DIR/home/actions-runner-4/_work" ] && [ ! -L "$ENV_DIR/home/acti
 else
   fail "switch off: 元に戻っていない"
 fi
+assert "switch off: tmpfs 側の _work を削除する" "$(ls -A "$ENV_DIR/shm/actions-runner" 2>/dev/null)" -- \
+  test ! -e "$ENV_DIR/shm/actions-runner/4"
 
 check "switch: 数字以外の番号は拒否する" 1 "数字でない" -- run_switch "$REPO/tmpfs-switch.sh" on '../x'
+
+# ExecStartPre は 2 回 on しても 1 本だけ、ExecStart の直前に入る (冪等)
+new_env switch-twice
+unit_dir="$ENV_DIR/home/.config/systemd/user"
+mkdir -p "$unit_dir" "$ENV_DIR/home/actions-runner-4/_work"
+unit="$unit_dir/actions.runner.ousiassllc.ousiass-desktop-4.service"
+printf '[Service]\nExecStart=/x/runsvc.sh\n' > "$unit"
+run_switch "$REPO/tmpfs-switch.sh" on 4 >/dev/null 2>&1
+run_switch "$REPO/tmpfs-switch.sh" on 4 >/dev/null 2>&1
+assert "switch on: 2 回実行しても ExecStartPre は 1 本で ExecStart の直前" "$(cat "$unit")" -- \
+  test "$(cat "$unit")" = "$(printf '[Service]\nExecStartPre=%s/prepare-work-tmpfs.sh 4\nExecStart=/x/runsvc.sh' "$REPO")"
+
+# ジョブ実行中 (Worker が居る) は _work を壊さず中断する
+new_env switch-busy
+mkdir -p "$ENV_DIR/home/actions-runner-4/_work/_tool"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$ENV_DIR/bin/pgrep"
+check "switch: Worker 稼働中は中断する" 1 "ジョブ実行中" -- run_switch "$REPO/tmpfs-switch.sh" on 4
+assert "switch: 中断時は _work に触れない" "" -- \
+  test -d "$ENV_DIR/home/actions-runner-4/_work/_tool" -a ! -L "$ENV_DIR/home/actions-runner-4/_work"
 
 echo
 echo "pass=$PASS fail=$FAIL"
